@@ -1,6 +1,6 @@
 import { pieceCells, type ActivePiece, type PieceKind } from "./pieces";
 
-export const BOARD_WIDTH = 10;
+export const BOARD_WIDTH = 12;
 export const BOARD_HEIGHT = 20;
 
 /** null = empty; otherwise the kind of piece that locked there (used for colour). */

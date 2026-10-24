@@ -27,7 +27,7 @@
         gap: 24px;
         align-items: flex-start;
       }
-      canvas {
+      #board {
         border: 2px solid #334155;
         border-radius: 4px;
       }
@@ -55,6 +55,11 @@
         font-size: 24px;
         font-variant-numeric: tabular-nums;
       }
+      .preview canvas {
+        display: block;
+        margin-top: 6px;
+        border-radius: 4px;
+      }
       .controls {
         margin-top: 20px;
         color: var(--muted);
@@ -74,6 +79,8 @@
       <canvas id="board"></canvas>
       <aside>
         <dl>
+          <dt>Next</dt>
+          <dd class="preview"><canvas id="next"></canvas></dd>
           <dt>Score</dt>
           <dd id="score">0</dd>
           <dt>Lines</dt>

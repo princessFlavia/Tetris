@@ -1,4 +1,5 @@
-export const PIECE_KINDS = ["I", "O", "T", "S", "Z", "J", "L"] as const;
+// I3 (short bar) and V (corner) are 3-block extras on top of the seven tetrominoes.
+export const PIECE_KINDS = ["I", "O", "T", "S", "Z", "J", "L", "I3", "V"] as const;
 export type PieceKind = (typeof PIECE_KINDS)[number];
 
 export type Rotation = 0 | 1 | 2 | 3;
@@ -27,6 +28,8 @@ const BASE_SHAPES: Record<PieceKind, readonly string[]> = {
   Z: ["##.", ".##", "..."],
   J: ["#..", "###", "..."],
   L: ["..#", "###", "..."],
+  I3: ["...", "###", "..."],
+  V: ["#.", "##"],
 };
 
 function parseShape(rows: readonly string[]): Offset[] {
@@ -63,6 +66,8 @@ const ROTATION_TABLE: Record<PieceKind, readonly (readonly Offset[])[]> = {
   Z: buildRotations(BASE_SHAPES.Z),
   J: buildRotations(BASE_SHAPES.J),
   L: buildRotations(BASE_SHAPES.L),
+  I3: buildRotations(BASE_SHAPES.I3),
+  V: buildRotations(BASE_SHAPES.V),
 };
 
 export function shapeBoxSize(kind: PieceKind): number {

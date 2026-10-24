@@ -19,6 +19,8 @@ export type GameStatus = "playing" | "paused" | "over";
 export interface GameState {
   readonly board: Board;
   readonly active: ActivePiece;
+  /** The piece that spawns after `active` locks; shown in the preview. */
+  readonly next: PieceKind;
   readonly score: number;
   readonly lines: number;
   readonly level: number;
@@ -81,6 +83,7 @@ export function createGame(nextPiece: PieceSource): GameState {
   return {
     board: createEmptyBoard(),
     active: spawnPiece(nextPiece()),
+    next: nextPiece(),
     score: 0,
     lines: 0,
     level: 0,
@@ -114,10 +117,10 @@ function lockPiece(state: GameState, nextPiece: PieceSource): GameState {
   const lines = state.lines + linesCleared;
   const score = state.score + lineClearPoints(linesCleared, state.level);
   const level = Math.floor(lines / LINES_PER_LEVEL);
-  const active = spawnPiece(nextPiece());
+  const active = spawnPiece(state.next);
   // Top-out: the new piece has nowhere to appear.
   const status: GameStatus = collides(board, active) ? "over" : "playing";
-  return { board, active, score, lines, level, status };
+  return { board, active, next: nextPiece(), score, lines, level, status };
 }
 
 function dropOrLock(state: GameState, nextPiece: PieceSource, pointsPerCell: number): GameState {

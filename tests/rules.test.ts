@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BOARD_HEIGHT, BOARD_WIDTH, clearFullRows, collides, createEmptyBoard, type Board, type Cell } from "../src/core/board";
-import { pieceCells, type PieceKind } from "../src/core/pieces";
+import { PIECE_KINDS, pieceCells, type PieceKind } from "../src/core/pieces";
 import {
   createGame,
   gravityIntervalMs,
@@ -23,17 +23,43 @@ function boardWithGappedRows(count: number, gapX: number): Board {
   );
 }
 
+/** Cycles through the given kinds in order, so tests know exactly what spawns next. */
+function sequence(...kinds: readonly PieceKind[]): PieceSource {
+  let index = 0;
+  return () => {
+    const kind = kinds[index % kinds.length];
+    if (kind === undefined) throw new Error("sequence needs at least one kind");
+    index++;
+    return kind;
+  };
+}
+
 function stepAll(state: GameState, actions: readonly GameAction[], source: PieceSource): GameState {
   return actions.reduce((current, action) => step(current, action, source), state);
 }
 
 describe("pieces", () => {
-  it("every rotation of every piece has four cells", () => {
-    for (const kind of ["I", "O", "T", "S", "Z", "J", "L"] as const) {
+  it("tetrominoes have four cells and the extra shapes have three, in every rotation", () => {
+    const expectedSize = (kind: PieceKind): number => (kind === "I3" || kind === "V" ? 3 : 4);
+    for (const kind of PIECE_KINDS) {
       for (const rotation of [0, 1, 2, 3] as const) {
-        expect(pieceCells({ kind, rotation, x: 0, y: 0 })).toHaveLength(4);
+        expect(pieceCells({ kind, rotation, x: 0, y: 0 })).toHaveLength(expectedSize(kind));
       }
     }
+  });
+
+  it("the corner piece has four distinct orientations", () => {
+    const orientations = ([0, 1, 2, 3] as const).map((rotation) =>
+      JSON.stringify(pieceCells({ kind: "V", rotation, x: 0, y: 0 })),
+    );
+    expect(new Set(orientations).size).toBe(4);
+  });
+
+  it("the short bar alternates between horizontal and vertical", () => {
+    const horizontal = pieceCells({ kind: "I3", rotation: 0, x: 0, y: 0 });
+    const vertical = pieceCells({ kind: "I3", rotation: 1, x: 0, y: 0 });
+    expect(new Set(horizontal.map((cell) => cell.y)).size).toBe(1);
+    expect(new Set(vertical.map((cell) => cell.x)).size).toBe(1);
   });
 
   it("four clockwise rotations return to the start", () => {
@@ -68,13 +94,16 @@ describe("rotation wall kick", () => {
   it("kicks a vertical I piece off the right wall when rotating", () => {
     const source = always("I");
     const game = createGame(source);
-    // Vertical I (rotation 1) occupies box column 2; x=7 puts it in the last column.
-    const againstWall: GameState = { ...game, active: { kind: "I", rotation: 1, x: 7, y: 5 } };
+    // Vertical I (rotation 1) occupies box column 2, so x = width - 3 puts it in the last column.
+    const againstWall: GameState = {
+      ...game,
+      active: { kind: "I", rotation: 1, x: BOARD_WIDTH - 3, y: 5 },
+    };
     const rotated = step(againstWall, { type: "rotate" }, source);
     expect(rotated.active.rotation).toBe(2);
     const xs = pieceCells(rotated.active).map((cell) => cell.x);
     expect(Math.max(...xs)).toBeLessThan(BOARD_WIDTH);
-    expect(rotated.active.x).toBe(6);
+    expect(rotated.active.x).toBe(BOARD_WIDTH - 4);
   });
 });
 
@@ -135,6 +164,32 @@ describe("scoring and levels", () => {
   it("awards a point per soft-dropped cell", () => {
     const source = always("T");
     expect(step(createGame(source), { type: "softDrop" }, source).score).toBe(1);
+  });
+});
+
+describe("next-piece preview", () => {
+  it("shows the second piece from the source at game start", () => {
+    const game = createGame(sequence("T", "V", "I3"));
+    expect(game.active.kind).toBe("T");
+    expect(game.next).toBe("V");
+  });
+
+  it("spawns the previewed piece and draws a new preview after a lock", () => {
+    const source = sequence("T", "V", "I3");
+    const afterLock = step(createGame(source), { type: "hardDrop" }, source);
+    expect(afterLock.active.kind).toBe("V");
+    expect(afterLock.next).toBe("I3");
+  });
+});
+
+describe("board size", () => {
+  it("is 12 columns wide and spawns pieces centred", () => {
+    expect(BOARD_WIDTH).toBe(12);
+    const cells = pieceCells(createGame(always("O")).active);
+    const xs = cells.map((cell) => cell.x);
+    // O occupies columns 5-6: five empty columns on each side.
+    expect(Math.min(...xs)).toBe(5);
+    expect(Math.max(...xs)).toBe(6);
   });
 });
 

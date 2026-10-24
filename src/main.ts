@@ -7,7 +7,14 @@ import {
 } from "./core/rules";
 import { bindAutoPause, bindKeyboard, type Command } from "./shell/input";
 import { startLoop } from "./shell/loop";
-import { renderBoard, renderHud, setupCanvas, type HudElements } from "./shell/render";
+import {
+  renderBoard,
+  renderHud,
+  renderPreview,
+  setupBoardCanvas,
+  setupPreviewCanvas,
+  type HudElements,
+} from "./shell/render";
 import { browserStorage, loadHighScore, saveHighScore } from "./shell/storage";
 
 function requireElement<T extends HTMLElement>(id: string, type: new () => T): T {
@@ -16,7 +23,8 @@ function requireElement<T extends HTMLElement>(id: string, type: new () => T): T
   return element;
 }
 
-const context = setupCanvas(requireElement("board", HTMLCanvasElement));
+const context = setupBoardCanvas(requireElement("board", HTMLCanvasElement));
+const previewContext = setupPreviewCanvas(requireElement("next", HTMLCanvasElement));
 const hud: HudElements = {
   score: requireElement("score", HTMLElement),
   lines: requireElement("lines", HTMLElement),
@@ -64,6 +72,7 @@ function onFrame(deltaMs: number): void {
     gravityElapsedMs = 0;
   }
   renderBoard(context, state);
+  renderPreview(previewContext, state.next);
   renderHud(hud, state, highScore);
 }
 

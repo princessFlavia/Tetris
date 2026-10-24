@@ -1,8 +1,11 @@
 import { BOARD_HEIGHT, BOARD_WIDTH } from "../core/board";
-import { pieceCells, type PieceKind } from "../core/pieces";
+import { pieceCells, pieceOffsets, type PieceKind } from "../core/pieces";
 import type { GameState } from "../core/rules";
 
 const CELL_SIZE = 30;
+const PREVIEW_CELL_SIZE = 24;
+// Big enough for the largest piece (the 4-long I) with no clipping.
+const PREVIEW_GRID = 4;
 
 const PIECE_COLORS: Record<PieceKind, string> = {
   I: "#38bdf8",
@@ -12,6 +15,8 @@ const PIECE_COLORS: Record<PieceKind, string> = {
   Z: "#f87171",
   J: "#60a5fa",
   L: "#fb923c",
+  I3: "#2dd4bf",
+  V: "#f472b6",
 };
 
 const BACKGROUND = "#0f172a";
@@ -27,10 +32,8 @@ export interface HudElements {
 }
 
 /** Sizes the canvas backing store for the device pixel ratio so blocks stay crisp. */
-export function setupCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+function setupCanvas(canvas: HTMLCanvasElement, width: number, height: number): CanvasRenderingContext2D {
   const ratio = window.devicePixelRatio || 1;
-  const width = BOARD_WIDTH * CELL_SIZE;
-  const height = BOARD_HEIGHT * CELL_SIZE;
   canvas.width = width * ratio;
   canvas.height = height * ratio;
   canvas.style.width = `${width}px`;
@@ -41,15 +44,25 @@ export function setupCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D
   return context;
 }
 
-function drawBlock(context: CanvasRenderingContext2D, x: number, y: number, kind: PieceKind): void {
+export function setupBoardCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+  return setupCanvas(canvas, BOARD_WIDTH * CELL_SIZE, BOARD_HEIGHT * CELL_SIZE);
+}
+
+export function setupPreviewCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+  const size = PREVIEW_GRID * PREVIEW_CELL_SIZE;
+  return setupCanvas(canvas, size, size);
+}
+
+function drawBlock(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  kind: PieceKind,
+  cellSize: number = CELL_SIZE,
+): void {
   const inset = 1;
   context.fillStyle = PIECE_COLORS[kind];
-  context.fillRect(
-    x * CELL_SIZE + inset,
-    y * CELL_SIZE + inset,
-    CELL_SIZE - inset * 2,
-    CELL_SIZE - inset * 2,
-  );
+  context.fillRect(x * cellSize + inset, y * cellSize + inset, cellSize - inset * 2, cellSize - inset * 2);
 }
 
 function drawGrid(context: CanvasRenderingContext2D): void {
@@ -98,6 +111,24 @@ export function renderBoard(context: CanvasRenderingContext2D, state: GameState)
 
   if (state.status === "paused") drawOverlay(context, "Paused", "Press P to resume");
   if (state.status === "over") drawOverlay(context, "Game Over", "Press R to restart");
+}
+
+/** Draws the upcoming piece centred in the preview box, using fractional cells so odd widths centre too. */
+export function renderPreview(context: CanvasRenderingContext2D, kind: PieceKind): void {
+  const size = PREVIEW_GRID * PREVIEW_CELL_SIZE;
+  context.fillStyle = BACKGROUND;
+  context.fillRect(0, 0, size, size);
+
+  const offsets = pieceOffsets(kind, 0);
+  const xs = offsets.map((cell) => cell.x);
+  const ys = offsets.map((cell) => cell.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const shiftX = (PREVIEW_GRID - (Math.max(...xs) - minX + 1)) / 2 - minX;
+  const shiftY = (PREVIEW_GRID - (Math.max(...ys) - minY + 1)) / 2 - minY;
+  for (const { x, y } of offsets) {
+    drawBlock(context, x + shiftX, y + shiftY, kind, PREVIEW_CELL_SIZE);
+  }
 }
 
 export function renderHud(hud: HudElements, state: GameState, highScore: number): void {
