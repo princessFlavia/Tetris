@@ -66,11 +66,30 @@ export function lineClearPoints(linesCleared: number, level: number): number {
   return base * (level + 1);
 }
 
+// Relative spawn weights. The 3-block extras are a quarter as likely as each
+// tetromino (~1 in 15 pieces combined) so they help without making the game trivial.
+export const SPAWN_WEIGHTS: Readonly<Record<PieceKind, number>> = {
+  I: 1,
+  O: 1,
+  T: 1,
+  S: 1,
+  Z: 1,
+  J: 1,
+  L: 1,
+  I3: 0.25,
+  V: 0.25,
+};
+const TOTAL_SPAWN_WEIGHT = PIECE_KINDS.reduce((sum, kind) => sum + SPAWN_WEIGHTS[kind], 0);
+
+/** Weighted pick: walks the kinds, subtracting each weight until the roll lands in one. */
 export function randomPieceSource(random: () => number): PieceSource {
   return () => {
-    const kind = PIECE_KINDS[Math.floor(random() * PIECE_KINDS.length)];
-    if (kind === undefined) throw new Error("random() must return a value in [0, 1)");
-    return kind;
+    let remaining = random() * TOTAL_SPAWN_WEIGHT;
+    for (const kind of PIECE_KINDS) {
+      remaining -= SPAWN_WEIGHTS[kind];
+      if (remaining < 0) return kind;
+    }
+    throw new Error("random() must return a value in [0, 1)");
   };
 }
 

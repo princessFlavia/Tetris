@@ -5,6 +5,7 @@ import {
   createGame,
   gravityIntervalMs,
   lineClearPoints,
+  randomPieceSource,
   step,
   type GameAction,
   type GameState,
@@ -179,6 +180,27 @@ describe("next-piece preview", () => {
     const afterLock = step(createGame(source), { type: "hardDrop" }, source);
     expect(afterLock.active.kind).toBe("V");
     expect(afterLock.next).toBe("I3");
+  });
+});
+
+describe("spawn weights", () => {
+  it("makes each small piece a quarter as likely as a tetromino", () => {
+    // Evenly spaced rolls across [0, 1) give an exact, deterministic distribution.
+    const samples = 7500;
+    let roll = 0;
+    const source = randomPieceSource(() => (roll + 0.5) / samples);
+    const counts = new Map<PieceKind, number>();
+    for (roll = 0; roll < samples; roll++) {
+      const kind = source();
+      counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    }
+    for (const kind of ["I", "O", "T", "S", "Z", "J", "L"] as const) expect(counts.get(kind)).toBe(1000);
+    expect(counts.get("I3")).toBe(250);
+    expect(counts.get("V")).toBe(250);
+  });
+
+  it("rejects rolls outside [0, 1)", () => {
+    expect(() => randomPieceSource(() => 1)()).toThrow();
   });
 });
 
