@@ -1,8 +1,9 @@
 import { pieceCells, type ActivePiece, type PieceKind, type Vec3 } from "./pieces";
 
 // A square tower: x runs left-right, z front-back, y up from the floor (y = 0).
-export const BOARD_WIDTH = 5;
-export const BOARD_DEPTH = 5;
+// 4 × 4 floors hold 16 cubes, about four pieces, so floors clear often.
+export const BOARD_WIDTH = 4;
+export const BOARD_DEPTH = 4;
 export const BOARD_HEIGHT = 16;
 
 /** null = empty; otherwise the kind of piece that locked there. */
@@ -44,6 +45,13 @@ export function mergePiece(board: Board, piece: ActivePiece): Board {
     row[x] = piece.kind;
   }
   return next;
+}
+
+/** Empty spots on one floor; used for the "bottom floor" readout. */
+export function emptyCellsInLayer(board: Board, y: number): number {
+  const layer = board[y];
+  if (layer === undefined) throw new Error(`no floor ${y}`);
+  return layer.reduce((sum, row) => sum + row.filter((cell) => cell === null).length, 0);
 }
 
 function isLayerFull(layer: Layer): boolean {

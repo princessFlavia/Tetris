@@ -20,7 +20,7 @@ import {
 import { BOARD_DEPTH, BOARD_HEIGHT, BOARD_WIDTH } from "../core/board";
 import { PIECE_KINDS, baseShape, pieceCells, shapeSize, type PieceKind, type Vec3 } from "../core/pieces";
 import { landingPiece, type GameState } from "../core/rules";
-import { BACKGROUND, FRAME_COLOR, LAYER_COLORS, PIECE_COLORS } from "./colors";
+import { BACKGROUND, FRAME_COLOR, LANDING_EDGE_COLOR, PIECE_COLORS } from "./colors";
 
 const BOARD_CANVAS_WIDTH = 420;
 const BOARD_CANVAS_HEIGHT = 640;
@@ -34,24 +34,17 @@ const FULL_TURN = Math.PI * 2;
 // Cubes are slightly smaller than their 1-unit cell so gaps keep the grid readable.
 const CUBE_SIZE = 0.92;
 const MAX_PIECE_CUBES = 4;
-const LANDING_OPACITY = 0.22;
+const LANDING_OPACITY = 0.35;
 
 function toColorMap(source: Readonly<Record<PieceKind, string>>): ReadonlyMap<PieceKind, Color> {
   return new Map(PIECE_KINDS.map((kind) => [kind, new Color(source[kind])]));
 }
 
 const PIECE_CUBE_COLORS = toColorMap(PIECE_COLORS);
-const LAYER_CUBE_COLORS: readonly Color[] = LAYER_COLORS.map((hex) => new Color(hex));
 
 function pieceColor(kind: PieceKind): Color {
   const color = PIECE_CUBE_COLORS.get(kind);
   if (color === undefined) throw new Error(`no colour for piece ${kind}`);
-  return color;
-}
-
-function layerColor(y: number): Color {
-  const color = LAYER_CUBE_COLORS[y % LAYER_CUBE_COLORS.length];
-  if (color === undefined) throw new Error("layer palette is empty");
   return color;
 }
 
@@ -131,6 +124,20 @@ function createCubeBatch(capacity: number, material: MeshStandardMaterial | Mesh
   return batch;
 }
 
+/**
+ * White wire edges around each landing cube, so the target spots stand out
+ * against the stack. Lines can't be instanced, so there's one per possible cube.
+ */
+function createLandingEdges(): LineSegments[] {
+  const edges = new EdgesGeometry(new BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE));
+  const material = new LineBasicMaterial({ color: LANDING_EDGE_COLOR });
+  return Array.from({ length: MAX_PIECE_CUBES }, () => {
+    const outline = new LineSegments(edges, material);
+    outline.visible = false;
+    return outline;
+  });
+}
+
 /** Writes cubes into a batch; call `finish` once all are placed. */
 function batchWriter(batch: InstancedMesh): { place(cell: Vec3, color: Color): void; finish(): void } {
   const matrix = new Matrix4();
@@ -171,7 +178,8 @@ export function createBoardView(canvas: HTMLCanvasElement): BoardView {
     MAX_PIECE_CUBES,
     new MeshBasicMaterial({ transparent: true, opacity: LANDING_OPACITY, depthWrite: false }),
   );
-  tower.add(createWellFrame(), lockedCubes, fallingCubes, landingCubes);
+  const landingEdges = createLandingEdges();
+  tower.add(createWellFrame(), lockedCubes, fallingCubes, landingCubes, ...landingEdges);
   scene.add(tower);
 
   return {
@@ -185,7 +193,7 @@ export function createBoardView(canvas: HTMLCanvasElement): BoardView {
       state.board.forEach((layer, y) => {
         layer.forEach((row, z) => {
           row.forEach((cell, x) => {
-            if (cell !== null) locked.place({ x, y, z }, layerColor(y));
+            if (cell !== null) locked.place({ x, y, z }, pieceColor(cell));
           });
         });
       });
@@ -193,11 +201,19 @@ export function createBoardView(canvas: HTMLCanvasElement): BoardView {
 
       const falling = batchWriter(fallingCubes);
       const landing = batchWriter(landingCubes);
+      for (const outline of landingEdges) outline.visible = false;
       // On game over the spawned piece overlaps the stack, so skip drawing it.
       if (state.status !== "over") {
         const color = pieceColor(state.active.kind);
         for (const cell of pieceCells(state.active)) falling.place(cell, color);
-        for (const cell of pieceCells(landingPiece(state.board, state.active))) landing.place(cell, color);
+        pieceCells(landingPiece(state.board, state.active)).forEach((cell, index) => {
+          landing.place(cell, color);
+          const outline = landingEdges[index];
+          if (outline === undefined) return;
+          const { x, y, z } = cellToLocal(cell);
+          outline.position.set(x, y, z);
+          outline.visible = true;
+        });
       }
       falling.finish();
       landing.finish();

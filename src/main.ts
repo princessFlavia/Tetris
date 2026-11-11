@@ -13,6 +13,7 @@ import {
   type HudElements,
   type OverlayElements,
 } from "./shell/hud";
+import { renderFloorMap, setupFloorMapCanvas } from "./shell/floor-map";
 import { bindAutoPause, bindKeyboard, type Command } from "./shell/input";
 import { startLoop } from "./shell/loop";
 import { createBoardView, createPreviewView, type BoardView, type PreviewView } from "./shell/render3d";
@@ -30,6 +31,7 @@ const hud: HudElements = {
   layers: requireElement("layers", HTMLElement),
   level: requireElement("level", HTMLElement),
   best: requireElement("best", HTMLElement),
+  floorStatus: requireElement("floor-status", HTMLElement),
 };
 const overlay: OverlayElements = {
   root: requireElement("overlay", HTMLElement),
@@ -46,6 +48,8 @@ try {
   showFatalError(overlay, "This browser couldn't start WebGL, which the 3D board needs.");
   throw error;
 }
+
+const floorMap = setupFloorMapCanvas(requireElement("floor-map", HTMLCanvasElement));
 
 const nextPiece = randomPieceSource(Math.random);
 const storage = browserStorage();
@@ -102,6 +106,7 @@ function onFrame(deltaMs: number): void {
   }
   boardView.render(state, deltaMs);
   previewView.render(state.next, deltaMs, state.status !== "paused");
+  renderFloorMap(floorMap, state, boardView.towerAngle());
   renderHud(hud, state, highScore);
   renderOverlay(overlay, state.status);
 }

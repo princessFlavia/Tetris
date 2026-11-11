@@ -1,6 +1,6 @@
 import type { PieceKind } from "../core/pieces";
 
-/** Colour of the falling piece and the preview, so you can tell which shape is coming. */
+/** Each piece keeps its colour after landing, so earlier pieces stay recognisable. */
 export const PIECE_COLORS: Readonly<Record<PieceKind, string>> = {
   I: "#38bdf8",
   O: "#facc15",
@@ -16,18 +16,6 @@ export const PIECE_COLORS: Readonly<Record<PieceKind, string>> = {
   Tripod: "#e2e8f0",
 };
 
-// Locked cubes are coloured by floor height instead of by piece, the usual
-// convention in 3D block games: it makes depth readable at a glance.
-export const LAYER_COLORS: readonly string[] = [
-  "#1d4ed8",
-  "#0891b2",
-  "#059669",
-  "#65a30d",
-  "#ca8a04",
-  "#ea580c",
-  "#dc2626",
-  "#c026d3",
-];
-
 export const BACKGROUND = "#0f172a";
 export const FRAME_COLOR = "#64748b";
+export const LANDING_EDGE_COLOR = "#f8fafc";

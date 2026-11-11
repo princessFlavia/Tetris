@@ -1,3 +1,4 @@
+import { BOARD_DEPTH, BOARD_WIDTH, emptyCellsInLayer } from "../core/board";
 import type { GameState, GameStatus } from "../core/rules";
 
 export interface HudElements {
@@ -5,6 +6,7 @@ export interface HudElements {
   readonly layers: HTMLElement;
   readonly level: HTMLElement;
   readonly best: HTMLElement;
+  readonly floorStatus: HTMLElement;
 }
 
 export interface OverlayElements {
@@ -29,6 +31,9 @@ export function renderHud(hud: HudElements, state: GameState, highScore: number)
   hud.layers.textContent = String(state.layers);
   hud.level.textContent = String(state.level);
   hud.best.textContent = String(Math.max(highScore, state.score));
+  // Full floors clear at once, so the bottom floor is always the one being filled.
+  const empty = emptyCellsInLayer(state.board, 0);
+  hud.floorStatus.textContent = `Bottom floor: ${empty} of ${BOARD_WIDTH * BOARD_DEPTH} empty`;
 }
 
 function showOverlay(overlay: OverlayElements, text: OverlayText | null): void {

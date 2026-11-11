@@ -28,6 +28,21 @@ function screenAway(angle: number): BoardAxis {
   return snapToBoardAxis(Math.sin(angle), -Math.cos(angle));
 }
 
+/** A unit step on the floor along one board axis. */
+export interface FloorVector {
+  readonly x: Step;
+  readonly z: Step;
+}
+
+function toFloorVector({ axis, sign }: BoardAxis): FloorVector {
+  return axis === "x" ? { x: sign, z: 0 } : { x: 0, z: sign };
+}
+
+/** Which board directions currently read as screen-right and screen-away. */
+export function screenBasis(towerAngle: number): { readonly right: FloorVector; readonly away: FloorVector } {
+  return { right: toFloorVector(screenRight(towerAngle)), away: toFloorVector(screenAway(towerAngle)) };
+}
+
 function asStep(value: number): Step {
   return value === 0 ? 0 : value > 0 ? 1 : -1;
 }

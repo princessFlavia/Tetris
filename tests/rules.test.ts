@@ -191,11 +191,11 @@ describe("rotation", () => {
   it("nudges a blocked rotation off the front wall", () => {
     const source = always("I");
     const game = createGame(source);
-    // I lies along x against the front wall (z = 4); turning it to lie along z overhangs by one.
-    const againstWall: GameState = { ...game, active: { ...game.active, position: { x: 0, y: 6, z: 4 } } };
+    // I lies along x against the front wall (z = 3); turning it to lie along z overhangs by one.
+    const againstWall: GameState = { ...game, active: { ...game.active, position: { x: 0, y: 6, z: 3 } } };
     const turned = step(againstWall, { type: "rotate", axis: "y", direction: 1 }, source);
     expect(shapeSize(turned.active.shape)).toEqual({ x: 1, y: 1, z: 4 });
-    expect(turned.active.position).toEqual({ x: 2, y: 6, z: 1 });
+    expect(turned.active.position).toEqual({ x: 2, y: 6, z: 0 });
     expect(collides(turned.board, turned.active)).toBe(false);
   });
 });
@@ -214,7 +214,7 @@ describe("floor clears", () => {
     expect(cleared[BOARD_HEIGHT - 1]?.every((row) => row.every((cell) => cell === null))).toBe(true);
   });
 
-  it("clears one floor when a flat I fills a four-cube gap", () => {
+  it("clears one floor when a flat I fills the last row of the floor", () => {
     const source = always("I");
     const holes = [0, 1, 2, 3].map((x) => ({ x, z: 0 }));
     const game: GameState = { ...createGame(source), board: boardWithHoles(1, holes) };
@@ -310,8 +310,8 @@ describe("spawn weights", () => {
 });
 
 describe("tower size", () => {
-  it("is 5 × 5 × 16 and spawns pieces centred at the top", () => {
-    expect([BOARD_WIDTH, BOARD_DEPTH, BOARD_HEIGHT]).toEqual([5, 5, 16]);
+  it("is 4 × 4 × 16 and spawns pieces centred at the top", () => {
+    expect([BOARD_WIDTH, BOARD_DEPTH, BOARD_HEIGHT]).toEqual([4, 4, 16]);
     const cells = pieceCells(createGame(always("O")).active);
     expect(new Set(cells.map((cell) => cell.x))).toEqual(new Set([1, 2]));
     expect(new Set(cells.map((cell) => cell.z))).toEqual(new Set([1, 2]));

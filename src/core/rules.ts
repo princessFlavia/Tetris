@@ -54,7 +54,7 @@ export type PieceSource = () => PieceKind;
 const LAYER_CLEAR_POINTS = [0, 40, 100, 300, 1200] as const;
 const SOFT_DROP_POINTS_PER_CELL = 1;
 const HARD_DROP_POINTS_PER_CELL = 2;
-// A 5×5 floor holds 25 cubes (about twice a 2D line), so levels come every 5 floors.
+// A floor holds 16 cubes (about four pieces), so levels come every 5 floors.
 export const LAYERS_PER_LEVEL = 5;
 
 // Nudges tried in order when a rotation is blocked: sideways on the floor, then
