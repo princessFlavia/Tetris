@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tetris</title>
+    <title>Tetris Tower</title>
     <style>
       :root {
         color-scheme: dark;
@@ -112,18 +112,20 @@
           <dd class="preview"><canvas id="next"></canvas></dd>
           <dt>Score</dt>
           <dd id="score">0</dd>
-          <dt>Lines</dt>
-          <dd id="lines">0</dd>
+          <dt>Floors</dt>
+          <dd id="layers">0</dd>
           <dt>Level</dt>
           <dd id="level">0</dd>
           <dt>Best</dt>
           <dd id="best">0</dd>
         </dl>
         <div class="controls">
-          <kbd>←</kbd> <kbd>→</kbd> move<br />
-          <kbd>↑</kbd> rotate<br />
-          <kbd>↓</kbd> soft drop<br />
-          <kbd>Space</kbd> hard drop<br />
+          <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> move<br />
+          <kbd>Q</kbd> <kbd>E</kbd> turn flat<br />
+          <kbd>W</kbd> <kbd>S</kbd> tip forward / back<br />
+          <kbd>A</kbd> <kbd>D</kbd> roll left / right<br />
+          <kbd>Shift</kbd> soft drop<br />
+          <kbd>Space</kbd> drop<br />
           <kbd>P</kbd> pause · <kbd>R</kbd> restart
         </div>
       </aside>

@@ -2,7 +2,7 @@ import type { GameState, GameStatus } from "../core/rules";
 
 export interface HudElements {
   readonly score: HTMLElement;
-  readonly lines: HTMLElement;
+  readonly layers: HTMLElement;
   readonly level: HTMLElement;
   readonly best: HTMLElement;
 }
@@ -26,7 +26,7 @@ const OVERLAY_TEXT: Readonly<Record<GameStatus, OverlayText | null>> = {
 
 export function renderHud(hud: HudElements, state: GameState, highScore: number): void {
   hud.score.textContent = String(state.score);
-  hud.lines.textContent = String(state.lines);
+  hud.layers.textContent = String(state.layers);
   hud.level.textContent = String(state.level);
   hud.best.textContent = String(Math.max(highScore, state.score));
 }

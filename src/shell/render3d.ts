@@ -3,8 +3,8 @@ import {
   BoxGeometry,
   Color,
   DirectionalLight,
-  DoubleSide,
   EdgesGeometry,
+  GridHelper,
   Group,
   InstancedMesh,
   LineBasicMaterial,
@@ -14,14 +14,13 @@ import {
   MeshBasicMaterial,
   MeshStandardMaterial,
   PerspectiveCamera,
-  PlaneGeometry,
   Scene,
   WebGLRenderer,
 } from "three";
-import { BOARD_HEIGHT, BOARD_WIDTH } from "../core/board";
-import { PIECE_KINDS, pieceCells, pieceOffsets, type PieceKind } from "../core/pieces";
-import type { GameState } from "../core/rules";
-import { BACKGROUND, FRAME_COLOR, PIECE_COLORS } from "./colors";
+import { BOARD_DEPTH, BOARD_HEIGHT, BOARD_WIDTH } from "../core/board";
+import { PIECE_KINDS, baseShape, pieceCells, shapeSize, type PieceKind, type Vec3 } from "../core/pieces";
+import { landingPiece, type GameState } from "../core/rules";
+import { BACKGROUND, FRAME_COLOR, LAYER_COLORS, PIECE_COLORS } from "./colors";
 
 const BOARD_CANVAS_WIDTH = 420;
 const BOARD_CANVAS_HEIGHT = 640;
@@ -34,20 +33,32 @@ const FULL_TURN = Math.PI * 2;
 
 // Cubes are slightly smaller than their 1-unit cell so gaps keep the grid readable.
 const CUBE_SIZE = 0.92;
-const MAX_ACTIVE_CELLS = 4;
+const MAX_PIECE_CUBES = 4;
+const LANDING_OPACITY = 0.22;
 
-const CUBE_COLORS: ReadonlyMap<PieceKind, Color> = new Map(
-  PIECE_KINDS.map((kind) => [kind, new Color(PIECE_COLORS[kind])]),
-);
+function toColorMap(source: Readonly<Record<PieceKind, string>>): ReadonlyMap<PieceKind, Color> {
+  return new Map(PIECE_KINDS.map((kind) => [kind, new Color(source[kind])]));
+}
 
-function cubeColor(kind: PieceKind): Color {
-  const color = CUBE_COLORS.get(kind);
+const PIECE_CUBE_COLORS = toColorMap(PIECE_COLORS);
+const LAYER_CUBE_COLORS: readonly Color[] = LAYER_COLORS.map((hex) => new Color(hex));
+
+function pieceColor(kind: PieceKind): Color {
+  const color = PIECE_CUBE_COLORS.get(kind);
   if (color === undefined) throw new Error(`no colour for piece ${kind}`);
+  return color;
+}
+
+function layerColor(y: number): Color {
+  const color = LAYER_CUBE_COLORS[y % LAYER_CUBE_COLORS.length];
+  if (color === undefined) throw new Error("layer palette is empty");
   return color;
 }
 
 export interface BoardView {
   render(state: GameState, deltaMs: number): void;
+  /** Current spin in radians; controls use it to map screen directions onto the board. */
+  towerAngle(): number;
 }
 
 export interface PreviewView {
@@ -78,30 +89,65 @@ function advanceSpin(angle: number, deltaMs: number, periodMs: number): number {
   return (angle + (deltaMs / periodMs) * FULL_TURN) % FULL_TURN;
 }
 
-/** Glass-like outline of the play area plus a base, so the well is readable at every angle. */
+/** Board cell → position in the tower group, centred on the spin axis. */
+function cellToLocal({ x, y, z }: Vec3): Vec3 {
+  return {
+    x: x - (BOARD_WIDTH - 1) / 2,
+    y: y - (BOARD_HEIGHT - 1) / 2,
+    z: z - (BOARD_DEPTH - 1) / 2,
+  };
+}
+
+/** Glass outline of the tower, a grid on its floor, and a base slab. */
 function createWellFrame(): Group {
   const frame = new Group();
   const outline = new LineSegments(
-    new EdgesGeometry(new BoxGeometry(BOARD_WIDTH, BOARD_HEIGHT, 1)),
+    new EdgesGeometry(new BoxGeometry(BOARD_WIDTH, BOARD_HEIGHT, BOARD_DEPTH)),
     new LineBasicMaterial({ color: FRAME_COLOR }),
   );
-  const backing = new Mesh(
-    new PlaneGeometry(BOARD_WIDTH, BOARD_HEIGHT),
-    // depthWrite off so the translucent panel never hides cubes behind it.
-    new MeshBasicMaterial({ color: FRAME_COLOR, transparent: true, opacity: 0.08, side: DoubleSide, depthWrite: false }),
-  );
+  // The floor is square (width = depth), which is what GridHelper draws.
+  const floorGrid = new GridHelper(BOARD_WIDTH, BOARD_WIDTH, FRAME_COLOR, FRAME_COLOR);
+  floorGrid.position.y = -BOARD_HEIGHT / 2 + 0.01;
   const base = new Mesh(
-    new BoxGeometry(BOARD_WIDTH + 0.6, 0.4, 1.6),
+    new BoxGeometry(BOARD_WIDTH + 0.6, 0.4, BOARD_DEPTH + 0.6),
     new MeshStandardMaterial({ color: FRAME_COLOR }),
   );
   base.position.y = -BOARD_HEIGHT / 2 - 0.2;
-  frame.add(outline, backing, base);
+  frame.add(outline, floorGrid, base);
   return frame;
 }
 
-/** Board cell (x right, y down) → world position centred on the tower's spin axis. */
-function setCellMatrix(target: Matrix4, x: number, y: number): Matrix4 {
-  return target.makeTranslation(x - (BOARD_WIDTH - 1) / 2, (BOARD_HEIGHT - 1) / 2 - y, 0);
+/**
+ * An instanced mesh draws many cubes in one draw call. Slots are rewritten every
+ * frame from the game state, so there's no per-cube bookkeeping.
+ */
+function createCubeBatch(capacity: number, material: MeshStandardMaterial | MeshBasicMaterial): InstancedMesh {
+  const batch = new InstancedMesh(new BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE), material, capacity);
+  // Instance count changes every frame, so a cached bounding sphere would go stale.
+  batch.frustumCulled = false;
+  // Create the colour buffer up front so the shader is compiled with per-instance colours.
+  batch.setColorAt(0, new Color(0xffffff));
+  batch.count = 0;
+  return batch;
+}
+
+/** Writes cubes into a batch; call `finish` once all are placed. */
+function batchWriter(batch: InstancedMesh): { place(cell: Vec3, color: Color): void; finish(): void } {
+  const matrix = new Matrix4();
+  let count = 0;
+  return {
+    place(cell, color) {
+      const { x, y, z } = cellToLocal(cell);
+      batch.setMatrixAt(count, matrix.makeTranslation(x, y, z));
+      batch.setColorAt(count, color);
+      count++;
+    },
+    finish() {
+      batch.count = count;
+      batch.instanceMatrix.needsUpdate = true;
+      if (batch.instanceColor !== null) batch.instanceColor.needsUpdate = true;
+    },
+  };
 }
 
 export function createBoardView(canvas: HTMLCanvasElement): BoardView {
@@ -110,72 +156,65 @@ export function createBoardView(canvas: HTMLCanvasElement): BoardView {
   addLights(scene);
 
   const camera = new PerspectiveCamera(45, BOARD_CANVAS_WIDTH / BOARD_CANVAS_HEIGHT, 0.1, 200);
-  // Slightly above centre so the tops of cubes show and the 3D depth reads.
-  camera.position.set(0, 5, 30);
-  camera.lookAt(0, -0.5, 0);
+  // Raised camera looking down: you see into the tower and the tops of the floors.
+  camera.position.set(0, 9, 24);
+  camera.lookAt(0, -1, 0);
 
   const tower = new Group();
-  tower.add(createWellFrame());
-
-  // One instanced mesh draws every cube in a single draw call; slots are
-  // rewritten each frame from the game state, so there's no per-cube bookkeeping.
-  const cubes = new InstancedMesh(
-    new BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE),
+  const lockedCubes = createCubeBatch(
+    BOARD_WIDTH * BOARD_DEPTH * BOARD_HEIGHT,
     new MeshStandardMaterial({ roughness: 0.45, metalness: 0.1 }),
-    BOARD_WIDTH * BOARD_HEIGHT + MAX_ACTIVE_CELLS,
   );
-  // Instance count changes every frame, so a cached bounding sphere would go stale.
-  cubes.frustumCulled = false;
-  // Create the colour buffer up front so the shader is compiled with per-instance colours.
-  cubes.setColorAt(0, cubeColor("I"));
-  tower.add(cubes);
+  const fallingCubes = createCubeBatch(MAX_PIECE_CUBES, new MeshStandardMaterial({ roughness: 0.3, metalness: 0.1 }));
+  // depthWrite off so the see-through landing outline never hides cubes behind it.
+  const landingCubes = createCubeBatch(
+    MAX_PIECE_CUBES,
+    new MeshBasicMaterial({ transparent: true, opacity: LANDING_OPACITY, depthWrite: false }),
+  );
+  tower.add(createWellFrame(), lockedCubes, fallingCubes, landingCubes);
   scene.add(tower);
 
-  const scratch = new Matrix4();
-
   return {
+    towerAngle: () => tower.rotation.y,
     render(state, deltaMs) {
       if (state.status !== "paused") {
         tower.rotation.y = advanceSpin(tower.rotation.y, deltaMs, BOARD_SPIN_PERIOD_MS);
       }
 
-      let count = 0;
-      const place = (x: number, y: number, kind: PieceKind): void => {
-        cubes.setMatrixAt(count, setCellMatrix(scratch, x, y));
-        cubes.setColorAt(count, cubeColor(kind));
-        count++;
-      };
-
-      state.board.forEach((row, y) => {
-        row.forEach((cell, x) => {
-          if (cell !== null) place(x, y, cell);
+      const locked = batchWriter(lockedCubes);
+      state.board.forEach((layer, y) => {
+        layer.forEach((row, z) => {
+          row.forEach((cell, x) => {
+            if (cell !== null) locked.place({ x, y, z }, layerColor(y));
+          });
         });
       });
+      locked.finish();
+
+      const falling = batchWriter(fallingCubes);
+      const landing = batchWriter(landingCubes);
       // On game over the spawned piece overlaps the stack, so skip drawing it.
       if (state.status !== "over") {
-        for (const { x, y } of pieceCells(state.active)) place(x, y, state.active.kind);
+        const color = pieceColor(state.active.kind);
+        for (const cell of pieceCells(state.active)) falling.place(cell, color);
+        for (const cell of pieceCells(landingPiece(state.board, state.active))) landing.place(cell, color);
       }
+      falling.finish();
+      landing.finish();
 
-      cubes.count = count;
-      cubes.instanceMatrix.needsUpdate = true;
-      if (cubes.instanceColor !== null) cubes.instanceColor.needsUpdate = true;
       renderer.render(scene, camera);
     },
   };
 }
 
 function buildPieceGroup(kind: PieceKind, geometry: BoxGeometry, material: MeshStandardMaterial): Group {
-  const offsets = pieceOffsets(kind, 0);
-  const xs = offsets.map((cell) => cell.x);
-  const ys = offsets.map((cell) => cell.y);
-  // Centre the piece on the spin axis so it turns in place instead of orbiting.
-  const centreX = (Math.min(...xs) + Math.max(...xs)) / 2;
-  const centreY = (Math.min(...ys) + Math.max(...ys)) / 2;
-
+  const shape = baseShape(kind);
+  const size = shapeSize(shape);
   const group = new Group();
-  for (const { x, y } of offsets) {
+  for (const { x, y, z } of shape) {
     const cube = new Mesh(geometry, material);
-    cube.position.set(x - centreX, centreY - y, 0);
+    // Centre the piece on the spin axis so it turns in place instead of orbiting.
+    cube.position.set(x - (size.x - 1) / 2, y - (size.y - 1) / 2, z - (size.z - 1) / 2);
     group.add(cube);
   }
   return group;
@@ -187,12 +226,12 @@ export function createPreviewView(canvas: HTMLCanvasElement): PreviewView {
   addLights(scene);
 
   const camera = new PerspectiveCamera(40, 1, 0.1, 50);
-  camera.position.set(0, 1.5, 8);
+  camera.position.set(0, 3, 8);
   camera.lookAt(0, 0, 0);
 
   const geometry = new BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
   const materials = new Map<PieceKind, MeshStandardMaterial>(
-    PIECE_KINDS.map((kind) => [kind, new MeshStandardMaterial({ color: cubeColor(kind), roughness: 0.45 })]),
+    PIECE_KINDS.map((kind) => [kind, new MeshStandardMaterial({ color: pieceColor(kind), roughness: 0.45 })]),
   );
 
   let shownKind: PieceKind | null = null;
@@ -211,7 +250,7 @@ export function createPreviewView(canvas: HTMLCanvasElement): PreviewView {
         shownKind = kind;
       }
       if (spinning) angle = advanceSpin(angle, deltaMs, PREVIEW_SPIN_PERIOD_MS);
-      piece.rotation.set(0.35, angle, 0);
+      piece.rotation.set(0.25, angle, 0);
       renderer.render(scene, camera);
     },
   };

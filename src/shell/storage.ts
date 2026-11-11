@@ -1,4 +1,5 @@
-const HIGH_SCORE_KEY = "tetris.highScore";
+// Separate from the old 2D game's key: the two games' scores aren't comparable.
+export const HIGH_SCORE_KEY = "tetris3d.highScore";
 
 export type ScoreStorage = Pick<Storage, "getItem" | "setItem">;
 

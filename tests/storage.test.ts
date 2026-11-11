@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadHighScore, saveHighScore, type ScoreStorage } from "../src/shell/storage";
+import { HIGH_SCORE_KEY, loadHighScore, saveHighScore, type ScoreStorage } from "../src/shell/storage";
 
 function memoryStorage(): ScoreStorage {
   const data = new Map<string, string>();
@@ -28,7 +28,7 @@ describe("high score storage", () => {
   it("defaults to 0 for missing or garbage values", () => {
     const storage = memoryStorage();
     expect(loadHighScore(storage)).toBe(0);
-    storage.setItem("tetris.highScore", "not a number");
+    storage.setItem(HIGH_SCORE_KEY, "not a number");
     expect(loadHighScore(storage)).toBe(0);
   });
 

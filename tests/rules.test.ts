@@ -1,10 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { BOARD_HEIGHT, BOARD_WIDTH, clearFullRows, collides, createEmptyBoard, type Board, type Cell } from "../src/core/board";
-import { PIECE_KINDS, pieceCells, type PieceKind } from "../src/core/pieces";
+import {
+  BOARD_DEPTH,
+  BOARD_HEIGHT,
+  BOARD_WIDTH,
+  clearFullLayers,
+  collides,
+  createEmptyBoard,
+  type Board,
+  type Cell,
+} from "../src/core/board";
+import {
+  PIECE_KINDS,
+  baseShape,
+  normalize,
+  pieceCells,
+  rotateShape,
+  shapeSize,
+  type Axis,
+  type PieceKind,
+  type Shape,
+} from "../src/core/pieces";
 import {
   createGame,
   gravityIntervalMs,
-  lineClearPoints,
+  landingPiece,
+  layerClearPoints,
   randomPieceSource,
   step,
   type GameAction,
@@ -12,17 +32,14 @@ import {
   type PieceSource,
 } from "../src/core/rules";
 
+const AXES: readonly Axis[] = ["x", "y", "z"];
+const SMALL_PIECES: readonly PieceKind[] = ["I3", "V"];
+const SOLID_3D_PIECES: readonly PieceKind[] = ["TwistL", "TwistR", "Tripod"];
+
 const always =
   (kind: PieceKind): PieceSource =>
   () =>
     kind;
-
-/** Board with the bottom `count` rows full except for column `gapX`. */
-function boardWithGappedRows(count: number, gapX: number): Board {
-  return createEmptyBoard().map((row, y) =>
-    y >= BOARD_HEIGHT - count ? row.map((_, x): Cell => (x === gapX ? null : "Z")) : row,
-  );
-}
 
 /** Cycles through the given kinds in order, so tests know exactly what spawns next. */
 function sequence(...kinds: readonly PieceKind[]): PieceSource {
@@ -39,130 +56,218 @@ function stepAll(state: GameState, actions: readonly GameAction[], source: Piece
   return actions.reduce((current, action) => step(current, action, source), state);
 }
 
+function repeat(action: GameAction, times: number): GameAction[] {
+  return Array.from({ length: times }, () => action);
+}
+
+/** Moves the active piece as far as it will go toward the x = 0, z = 0 corner. */
+function pushToCorner(state: GameState, source: PieceSource): GameState {
+  return stepAll(
+    state,
+    [...repeat({ type: "move", dx: -1, dz: 0 }, BOARD_WIDTH), ...repeat({ type: "move", dx: 0, dz: -1 }, BOARD_DEPTH)],
+    source,
+  );
+}
+
+/** The bottom `count` floors are full except at the listed (x, z) holes. */
+function boardWithHoles(count: number, holes: readonly { x: number; z: number }[]): Board {
+  return createEmptyBoard().map((layer, y) =>
+    y < count
+      ? layer.map((row, z) => row.map((_, x): Cell => (holes.some((h) => h.x === x && h.z === z) ? null : "Z")))
+      : layer,
+  );
+}
+
+function isEmpty(board: Board): boolean {
+  return board.every((layer) => layer.every((row) => row.every((cell) => cell === null)));
+}
+
+const shapeKey = (shape: Shape): string => JSON.stringify(shape);
+
+/** Every distinct orientation reachable by quarter turns. */
+function allOrientations(shape: Shape): Set<string> {
+  const seen = new Map<string, Shape>([[shapeKey(shape), shape]]);
+  const queue: Shape[] = [shape];
+  for (let current = queue.shift(); current !== undefined; current = queue.shift()) {
+    for (const axis of AXES) {
+      const turned = rotateShape(current, axis, 1);
+      if (!seen.has(shapeKey(turned))) {
+        seen.set(shapeKey(turned), turned);
+        queue.push(turned);
+      }
+    }
+  }
+  return new Set(seen.keys());
+}
+
 describe("pieces", () => {
-  it("tetrominoes have four cells and the extra shapes have three, in every rotation", () => {
-    const expectedSize = (kind: PieceKind): number => (kind === "I3" || kind === "V" ? 3 : 4);
+  it("small pieces have three cubes and the rest have four", () => {
     for (const kind of PIECE_KINDS) {
-      for (const rotation of [0, 1, 2, 3] as const) {
-        expect(pieceCells({ kind, rotation, x: 0, y: 0 })).toHaveLength(expectedSize(kind));
+      expect(baseShape(kind)).toHaveLength(SMALL_PIECES.includes(kind) ? 3 : 4);
+    }
+  });
+
+  it("the original nine pieces start flat and the three new ones span all three axes", () => {
+    for (const kind of PIECE_KINDS) {
+      const size = shapeSize(baseShape(kind));
+      if (SOLID_3D_PIECES.includes(kind)) {
+        expect([size.x, size.y, size.z].every((extent) => extent >= 2)).toBe(true);
+      } else {
+        expect(size.y).toBe(1);
       }
     }
   });
 
-  it("the corner piece has four distinct orientations", () => {
-    const orientations = ([0, 1, 2, 3] as const).map((rotation) =>
-      JSON.stringify(pieceCells({ kind: "V", rotation, x: 0, y: 0 })),
-    );
-    expect(new Set(orientations).size).toBe(4);
+  it("the two twists are mirror images that no rotation can turn into each other", () => {
+    const left = baseShape("TwistL");
+    const right = baseShape("TwistR");
+    expect(allOrientations(left).has(shapeKey(right))).toBe(false);
+    const mirroredLeft = normalize(left.map(({ x, y, z }) => ({ x: -x, y, z })));
+    expect(allOrientations(right).has(shapeKey(mirroredLeft))).toBe(true);
   });
 
-  it("the short bar alternates between horizontal and vertical", () => {
-    const horizontal = pieceCells({ kind: "I3", rotation: 0, x: 0, y: 0 });
-    const vertical = pieceCells({ kind: "I3", rotation: 1, x: 0, y: 0 });
-    expect(new Set(horizontal.map((cell) => cell.y)).size).toBe(1);
-    expect(new Set(vertical.map((cell) => cell.x)).size).toBe(1);
-  });
-
-  it("four clockwise rotations return to the start", () => {
-    const start = createGame(always("T"));
-    const rotated = stepAll(
-      { ...start, active: { ...start.active, y: 5 } },
-      [{ type: "rotate" }, { type: "rotate" }, { type: "rotate" }, { type: "rotate" }],
-      always("T"),
-    );
-    expect(pieceCells(rotated.active)).toEqual(pieceCells({ ...start.active, y: 5 }));
+  it("four quarter turns about any axis restore every shape", () => {
+    for (const kind of PIECE_KINDS) {
+      for (const axis of AXES) {
+        let shape = baseShape(kind);
+        for (let turn = 0; turn < 4; turn++) shape = rotateShape(shape, axis, 1);
+        expect(shape).toEqual(baseShape(kind));
+      }
+    }
   });
 });
 
-describe("collision", () => {
-  it("treats walls and floor as solid", () => {
-    const board = createEmptyBoard();
-    expect(collides(board, { kind: "O", rotation: 0, x: -1, y: 0 })).toBe(true);
-    expect(collides(board, { kind: "O", rotation: 0, x: BOARD_WIDTH - 1, y: 0 })).toBe(true);
-    expect(collides(board, { kind: "O", rotation: 0, x: 0, y: BOARD_HEIGHT - 1 })).toBe(true);
-    expect(collides(board, { kind: "O", rotation: 0, x: 0, y: BOARD_HEIGHT - 2 })).toBe(false);
-  });
-
-  it("stops the piece moving past the left wall", () => {
+describe("movement", () => {
+  it("stops at the walls on both floor axes", () => {
     const source = always("O");
-    const moves = Array.from({ length: 20 }, () => ({ type: "moveLeft" }) as const);
-    const state = stepAll(createGame(source), moves, source);
-    expect(Math.min(...pieceCells(state.active).map((cell) => cell.x))).toBe(0);
-  });
-});
+    const cornered = pushToCorner(createGame(source), source);
+    const cells = pieceCells(cornered.active);
+    expect(Math.min(...cells.map((cell) => cell.x))).toBe(0);
+    expect(Math.min(...cells.map((cell) => cell.z))).toBe(0);
 
-describe("rotation wall kick", () => {
-  it("kicks a vertical I piece off the right wall when rotating", () => {
-    const source = always("I");
-    const game = createGame(source);
-    // Vertical I (rotation 1) occupies box column 2, so x = width - 3 puts it in the last column.
-    const againstWall: GameState = {
-      ...game,
-      active: { kind: "I", rotation: 1, x: BOARD_WIDTH - 3, y: 5 },
-    };
-    const rotated = step(againstWall, { type: "rotate" }, source);
-    expect(rotated.active.rotation).toBe(2);
-    const xs = pieceCells(rotated.active).map((cell) => cell.x);
-    expect(Math.max(...xs)).toBeLessThan(BOARD_WIDTH);
-    expect(rotated.active.x).toBe(BOARD_WIDTH - 4);
-  });
-});
-
-describe("line clears", () => {
-  it("removes full rows and shifts the rest down", () => {
-    const board = boardWithGappedRows(2, 0).map((row, y) =>
-      y === BOARD_HEIGHT - 1 ? row.map((): Cell => "I") : row,
+    const farSide = stepAll(
+      cornered,
+      [...repeat({ type: "move", dx: 1, dz: 0 }, BOARD_WIDTH), ...repeat({ type: "move", dx: 0, dz: 1 }, BOARD_DEPTH)],
+      source,
     );
-    const { board: cleared, linesCleared } = clearFullRows(board);
-    expect(linesCleared).toBe(1);
-    expect(cleared).toHaveLength(BOARD_HEIGHT);
-    expect(cleared[0]?.every((cell) => cell === null)).toBe(true);
-    expect(cleared[BOARD_HEIGHT - 1]?.[0]).toBeNull();
+    const farCells = pieceCells(farSide.active);
+    expect(Math.max(...farCells.map((cell) => cell.x))).toBe(BOARD_WIDTH - 1);
+    expect(Math.max(...farCells.map((cell) => cell.z))).toBe(BOARD_DEPTH - 1);
   });
 
-  it("scores a tetris when a vertical I fills a four-row gap", () => {
-    const source = always("I");
-    const game = createGame(source);
-    const setup: GameState = {
-      ...game,
-      board: boardWithGappedRows(4, 9),
-      active: { kind: "I", rotation: 1, x: 7, y: 0 },
-    };
-    const after = step(setup, { type: "hardDrop" }, source);
-    expect(after.lines).toBe(4);
-    // 1200 for the tetris plus 2 points per cell dropped (rows 0 → 16).
-    expect(after.score).toBe(1200 + 16 * 2);
-    expect(after.board.flat().every((cell) => cell === null)).toBe(true);
+  it("treats the floor as solid", () => {
+    const piece = { kind: "O" as const, shape: baseShape("O"), position: { x: 0, y: -1, z: 0 } };
+    expect(collides(createEmptyBoard(), piece)).toBe(true);
+    expect(collides(createEmptyBoard(), { ...piece, position: { x: 0, y: 0, z: 0 } })).toBe(false);
+  });
+
+  it("lands on the floor, or on top of whatever is below", () => {
+    const piece = { kind: "O" as const, shape: baseShape("O"), position: { x: 0, y: 10, z: 0 } };
+    expect(landingPiece(createEmptyBoard(), piece).position.y).toBe(0);
+    const withCube = createEmptyBoard().map((layer, y) =>
+      y === 0 ? layer.map((row, z) => row.map((_, x): Cell => (x === 0 && z === 0 ? "I" : null))) : layer,
+    );
+    expect(landingPiece(withCube, piece).position.y).toBe(1);
   });
 });
 
-describe("scoring and levels", () => {
-  it("uses NES line-clear values scaled by level", () => {
-    expect(lineClearPoints(1, 0)).toBe(40);
-    expect(lineClearPoints(2, 0)).toBe(100);
-    expect(lineClearPoints(3, 0)).toBe(300);
-    expect(lineClearPoints(4, 2)).toBe(3600);
+describe("rotation", () => {
+  it("tipping the I piece about z stands it upright", () => {
+    const source = always("I");
+    const tipped = step(createGame(source), { type: "rotate", axis: "z", direction: 1 }, source);
+    expect(shapeSize(tipped.active.shape)).toEqual({ x: 1, y: 4, z: 1 });
   });
 
-  it("levels up after 10 lines", () => {
+  it("four turns about any axis put the piece back exactly where it was", () => {
+    const source = always("T");
+    const game = createGame(source);
+    const midTower: GameState = { ...game, active: { ...game.active, position: { x: 1, y: 6, z: 1 } } };
+    for (const axis of AXES) {
+      const turned = stepAll(midTower, repeat({ type: "rotate", axis, direction: 1 }, 4), source);
+      expect(turned.active).toEqual(midTower.active);
+    }
+  });
+
+  it("nudges a blocked rotation off the front wall", () => {
     const source = always("I");
     const game = createGame(source);
-    const setup: GameState = {
-      ...game,
-      lines: 8,
-      board: boardWithGappedRows(4, 9),
-      active: { kind: "I", rotation: 1, x: 7, y: 0 },
-    };
-    expect(step(setup, { type: "hardDrop" }, source).level).toBe(1);
+    // I lies along x against the front wall (z = 4); turning it to lie along z overhangs by one.
+    const againstWall: GameState = { ...game, active: { ...game.active, position: { x: 0, y: 6, z: 4 } } };
+    const turned = step(againstWall, { type: "rotate", axis: "y", direction: 1 }, source);
+    expect(shapeSize(turned.active.shape)).toEqual({ x: 1, y: 1, z: 4 });
+    expect(turned.active.position).toEqual({ x: 2, y: 6, z: 1 });
+    expect(collides(turned.board, turned.active)).toBe(false);
+  });
+});
+
+describe("floor clears", () => {
+  it("removes a full floor and drops the floors above", () => {
+    const board = boardWithHoles(2, [{ x: 2, z: 2 }]).map((layer, y) =>
+      y === 0 ? layer.map((row) => row.map((): Cell => "I")) : layer,
+    );
+    const { board: cleared, layersCleared } = clearFullLayers(board);
+    expect(layersCleared).toBe(1);
+    expect(cleared).toHaveLength(BOARD_HEIGHT);
+    // The floor with the hole is now at the bottom; the top is fresh and empty.
+    expect(cleared[0]?.[2]?.[2]).toBeNull();
+    expect(cleared[0]?.[0]?.[0]).toBe("Z");
+    expect(cleared[BOARD_HEIGHT - 1]?.every((row) => row.every((cell) => cell === null))).toBe(true);
   });
 
-  it("gravity speeds up with level and bottoms out at 50ms", () => {
-    expect(gravityIntervalMs(0)).toBe(800);
+  it("clears one floor when a flat I fills a four-cube gap", () => {
+    const source = always("I");
+    const holes = [0, 1, 2, 3].map((x) => ({ x, z: 0 }));
+    const game: GameState = { ...createGame(source), board: boardWithHoles(1, holes) };
+    const cornered = pushToCorner(game, source);
+    const dropDistance = cornered.active.position.y;
+    const after = step(cornered, { type: "hardDrop" }, source);
+    expect(after.layers).toBe(1);
+    expect(after.score).toBe(40 + dropDistance * 2);
+    expect(isEmpty(after.board)).toBe(true);
+  });
+
+  it("clears two floors at once when an upright O fills a two-high gap", () => {
+    const source = always("O");
+    const holes = [
+      { x: 0, z: 0 },
+      { x: 1, z: 0 },
+    ];
+    const game: GameState = { ...createGame(source), board: boardWithHoles(2, holes) };
+    const upright = step(game, { type: "rotate", axis: "x", direction: 1 }, source);
+    expect(shapeSize(upright.active.shape)).toEqual({ x: 2, y: 2, z: 1 });
+    const cornered = pushToCorner(upright, source);
+    const dropDistance = cornered.active.position.y;
+    const after = step(cornered, { type: "hardDrop" }, source);
+    expect(after.layers).toBe(2);
+    expect(after.score).toBe(100 + dropDistance * 2);
+    expect(isEmpty(after.board)).toBe(true);
+  });
+
+  it("levels up every 5 floors", () => {
+    const source = always("I");
+    const holes = [0, 1, 2, 3].map((x) => ({ x, z: 0 }));
+    const game: GameState = { ...createGame(source), layers: 4, board: boardWithHoles(1, holes) };
+    const after = step(pushToCorner(game, source), { type: "hardDrop" }, source);
+    expect(after.layers).toBe(5);
+    expect(after.level).toBe(1);
+  });
+});
+
+describe("scoring and speed", () => {
+  it("uses NES clear values scaled by level", () => {
+    expect(layerClearPoints(1, 0)).toBe(40);
+    expect(layerClearPoints(2, 0)).toBe(100);
+    expect(layerClearPoints(3, 0)).toBe(300);
+    expect(layerClearPoints(4, 2)).toBe(3600);
+  });
+
+  it("gravity starts at one floor per second, speeds up, and bottoms out at 50ms", () => {
+    expect(gravityIntervalMs(0)).toBe(1000);
     expect(gravityIntervalMs(1)).toBeLessThan(gravityIntervalMs(0));
     expect(gravityIntervalMs(100)).toBe(50);
   });
 
-  it("awards a point per soft-dropped cell", () => {
+  it("awards a point per soft-dropped floor", () => {
     const source = always("T");
     expect(step(createGame(source), { type: "softDrop" }, source).score).toBe(1);
   });
@@ -170,23 +275,23 @@ describe("scoring and levels", () => {
 
 describe("next-piece preview", () => {
   it("shows the second piece from the source at game start", () => {
-    const game = createGame(sequence("T", "V", "I3"));
-    expect(game.active.kind).toBe("T");
+    const game = createGame(sequence("Tripod", "V", "I3"));
+    expect(game.active.kind).toBe("Tripod");
     expect(game.next).toBe("V");
   });
 
   it("spawns the previewed piece and draws a new preview after a lock", () => {
-    const source = sequence("T", "V", "I3");
+    const source = sequence("T", "TwistL", "I3");
     const afterLock = step(createGame(source), { type: "hardDrop" }, source);
-    expect(afterLock.active.kind).toBe("V");
+    expect(afterLock.active.kind).toBe("TwistL");
     expect(afterLock.next).toBe("I3");
   });
 });
 
 describe("spawn weights", () => {
-  it("makes each small piece a quarter as likely as a tetromino", () => {
-    // Evenly spaced rolls across [0, 1) give an exact, deterministic distribution.
-    const samples = 7500;
+  it("makes each small piece a quarter as likely as each 4-cube piece", () => {
+    // Total weight is 10.5; evenly spaced rolls give an exact, deterministic distribution.
+    const samples = 1050;
     let roll = 0;
     const source = randomPieceSource(() => (roll + 0.5) / samples);
     const counts = new Map<PieceKind, number>();
@@ -194,9 +299,9 @@ describe("spawn weights", () => {
       const kind = source();
       counts.set(kind, (counts.get(kind) ?? 0) + 1);
     }
-    for (const kind of ["I", "O", "T", "S", "Z", "J", "L"] as const) expect(counts.get(kind)).toBe(1000);
-    expect(counts.get("I3")).toBe(250);
-    expect(counts.get("V")).toBe(250);
+    for (const kind of PIECE_KINDS) {
+      expect(counts.get(kind)).toBe(SMALL_PIECES.includes(kind) ? 25 : 100);
+    }
   });
 
   it("rejects rolls outside [0, 1)", () => {
@@ -204,14 +309,13 @@ describe("spawn weights", () => {
   });
 });
 
-describe("board size", () => {
-  it("is 12 columns wide and spawns pieces centred", () => {
-    expect(BOARD_WIDTH).toBe(12);
+describe("tower size", () => {
+  it("is 5 × 5 × 16 and spawns pieces centred at the top", () => {
+    expect([BOARD_WIDTH, BOARD_DEPTH, BOARD_HEIGHT]).toEqual([5, 5, 16]);
     const cells = pieceCells(createGame(always("O")).active);
-    const xs = cells.map((cell) => cell.x);
-    // O occupies columns 5-6: five empty columns on each side.
-    expect(Math.min(...xs)).toBe(5);
-    expect(Math.max(...xs)).toBe(6);
+    expect(new Set(cells.map((cell) => cell.x))).toEqual(new Set([1, 2]));
+    expect(new Set(cells.map((cell) => cell.z))).toEqual(new Set([1, 2]));
+    expect(cells.every((cell) => cell.y === BOARD_HEIGHT - 1)).toBe(true);
   });
 });
 
@@ -220,7 +324,7 @@ describe("pause and game over", () => {
     const source = always("T");
     const paused = step(createGame(source), { type: "pause" }, source);
     expect(paused.status).toBe("paused");
-    expect(step(paused, { type: "moveLeft" }, source)).toBe(paused);
+    expect(step(paused, { type: "move", dx: -1, dz: 0 }, source)).toBe(paused);
     expect(step(paused, { type: "tick" }, source)).toBe(paused);
     expect(step(paused, { type: "togglePause" }, source).status).toBe("playing");
   });
@@ -238,6 +342,6 @@ describe("pause and game over", () => {
       state = step(state, { type: "hardDrop" }, source);
     }
     expect(state.status).toBe("over");
-    expect(step(state, { type: "moveLeft" }, source)).toBe(state);
+    expect(step(state, { type: "move", dx: -1, dz: 0 }, source)).toBe(state);
   });
 });

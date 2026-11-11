@@ -1,55 +1,64 @@
-import { pieceCells, type ActivePiece, type PieceKind } from "./pieces";
+import { pieceCells, type ActivePiece, type PieceKind, type Vec3 } from "./pieces";
 
-export const BOARD_WIDTH = 12;
-export const BOARD_HEIGHT = 20;
+// A square tower: x runs left-right, z front-back, y up from the floor (y = 0).
+export const BOARD_WIDTH = 5;
+export const BOARD_DEPTH = 5;
+export const BOARD_HEIGHT = 16;
 
-/** null = empty; otherwise the kind of piece that locked there (used for colour). */
+/** null = empty; otherwise the kind of piece that locked there. */
 export type Cell = PieceKind | null;
-export type Row = readonly Cell[];
-export type Board = readonly Row[];
+/** One floor of the tower, indexed [z][x]. */
+export type Layer = readonly (readonly Cell[])[];
+/** Floors from the bottom up, indexed [y]. */
+export type Board = readonly Layer[];
 
-function createEmptyRow(): Cell[] {
-  return Array.from({ length: BOARD_WIDTH }, () => null);
+function createEmptyLayer(): Cell[][] {
+  return Array.from({ length: BOARD_DEPTH }, () => Array.from({ length: BOARD_WIDTH }, (): Cell => null));
 }
 
 export function createEmptyBoard(): Board {
-  return Array.from({ length: BOARD_HEIGHT }, createEmptyRow);
+  return Array.from({ length: BOARD_HEIGHT }, createEmptyLayer);
 }
 
-export function cellAt(board: Board, x: number, y: number): Cell | undefined {
-  return board[y]?.[x];
+export function cellAt(board: Board, { x, y, z }: Vec3): Cell | undefined {
+  return board[y]?.[z]?.[x];
 }
 
-/** True if any cell of the piece is off the board or overlaps a locked block. */
+/** True if any cube of the piece is outside the tower or overlaps a locked cube. */
 export function collides(board: Board, piece: ActivePiece): boolean {
-  return pieceCells(piece).some(({ x, y }) => {
-    const cell = cellAt(board, x, y);
+  return pieceCells(piece).some((cell) => {
+    const occupant = cellAt(board, cell);
     // undefined means out of bounds, which counts as a wall.
-    return cell === undefined || cell !== null;
+    return occupant === undefined || occupant !== null;
   });
 }
 
 /** Returns a new board with the piece written into it. Caller guarantees no collision. */
 export function mergePiece(board: Board, piece: ActivePiece): Board {
-  const next = board.map((row) => [...row]);
-  for (const { x, y } of pieceCells(piece)) {
-    const row = next[y];
+  const next = board.map((layer) => layer.map((row) => [...row]));
+  for (const { x, y, z } of pieceCells(piece)) {
+    const row = next[y]?.[z];
     if (row === undefined || x < 0 || x >= BOARD_WIDTH) {
-      throw new Error(`cannot merge piece outside board at (${x}, ${y})`);
+      throw new Error(`cannot merge piece outside board at (${x}, ${y}, ${z})`);
     }
     row[x] = piece.kind;
   }
   return next;
 }
 
-export interface ClearResult {
-  readonly board: Board;
-  readonly linesCleared: number;
+function isLayerFull(layer: Layer): boolean {
+  return layer.every((row) => row.every((cell) => cell !== null));
 }
 
-export function clearFullRows(board: Board): ClearResult {
-  const remaining = board.filter((row) => row.some((cell) => cell === null));
-  const linesCleared = BOARD_HEIGHT - remaining.length;
-  const refill = Array.from({ length: linesCleared }, createEmptyRow);
-  return { board: [...refill, ...remaining], linesCleared };
+export interface ClearResult {
+  readonly board: Board;
+  readonly layersCleared: number;
+}
+
+/** Removes full floors; everything above drops and new empty floors appear at the top. */
+export function clearFullLayers(board: Board): ClearResult {
+  const remaining = board.filter((layer) => !isLayerFull(layer));
+  const layersCleared = BOARD_HEIGHT - remaining.length;
+  const refill = Array.from({ length: layersCleared }, createEmptyLayer);
+  return { board: [...remaining, ...refill], layersCleared };
 }

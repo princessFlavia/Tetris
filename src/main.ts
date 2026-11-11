@@ -3,6 +3,7 @@ import {
   gravityIntervalMs,
   randomPieceSource,
   step,
+  type GameAction,
   type GameState,
 } from "./core/rules";
 import {
@@ -15,6 +16,7 @@ import {
 import { bindAutoPause, bindKeyboard, type Command } from "./shell/input";
 import { startLoop } from "./shell/loop";
 import { createBoardView, createPreviewView, type BoardView, type PreviewView } from "./shell/render3d";
+import { screenMove, screenRoll, screenTip } from "./shell/screen-controls";
 import { browserStorage, loadHighScore, saveHighScore } from "./shell/storage";
 
 function requireElement<T extends HTMLElement>(id: string, type: new () => T): T {
@@ -25,7 +27,7 @@ function requireElement<T extends HTMLElement>(id: string, type: new () => T): T
 
 const hud: HudElements = {
   score: requireElement("score", HTMLElement),
-  lines: requireElement("lines", HTMLElement),
+  layers: requireElement("layers", HTMLElement),
   level: requireElement("level", HTMLElement),
   best: requireElement("best", HTMLElement),
 };
@@ -59,6 +61,20 @@ function recordHighScore(previous: GameState, current: GameState): void {
   }
 }
 
+/** Screen-relative inputs depend on how far the tower has turned; resolve them now. */
+function resolveCommand(command: Exclude<Command, { type: "restart" }>): GameAction {
+  switch (command.type) {
+    case "screenMove":
+      return screenMove(command.direction, boardView.towerAngle());
+    case "screenTip":
+      return screenTip(command.direction, boardView.towerAngle());
+    case "screenRoll":
+      return screenRoll(command.direction, boardView.towerAngle());
+    default:
+      return command;
+  }
+}
+
 function handleCommand(command: Command): void {
   if (command.type === "restart") {
     // Only restart from game over so a stray R mid-game doesn't wipe a run.
@@ -69,7 +85,7 @@ function handleCommand(command: Command): void {
     return;
   }
   const previous = state;
-  state = step(state, command, nextPiece);
+  state = step(state, resolveCommand(command), nextPiece);
   recordHighScore(previous, state);
 }
 
