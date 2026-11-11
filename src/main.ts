@@ -5,16 +5,16 @@ import {
   step,
   type GameState,
 } from "./core/rules";
+import {
+  renderHud,
+  renderOverlay,
+  showFatalError,
+  type HudElements,
+  type OverlayElements,
+} from "./shell/hud";
 import { bindAutoPause, bindKeyboard, type Command } from "./shell/input";
 import { startLoop } from "./shell/loop";
-import {
-  renderBoard,
-  renderHud,
-  renderPreview,
-  setupBoardCanvas,
-  setupPreviewCanvas,
-  type HudElements,
-} from "./shell/render";
+import { createBoardView, createPreviewView, type BoardView, type PreviewView } from "./shell/render3d";
 import { browserStorage, loadHighScore, saveHighScore } from "./shell/storage";
 
 function requireElement<T extends HTMLElement>(id: string, type: new () => T): T {
@@ -23,14 +23,27 @@ function requireElement<T extends HTMLElement>(id: string, type: new () => T): T
   return element;
 }
 
-const context = setupBoardCanvas(requireElement("board", HTMLCanvasElement));
-const previewContext = setupPreviewCanvas(requireElement("next", HTMLCanvasElement));
 const hud: HudElements = {
   score: requireElement("score", HTMLElement),
   lines: requireElement("lines", HTMLElement),
   level: requireElement("level", HTMLElement),
   best: requireElement("best", HTMLElement),
 };
+const overlay: OverlayElements = {
+  root: requireElement("overlay", HTMLElement),
+  title: requireElement("overlay-title", HTMLElement),
+  hint: requireElement("overlay-hint", HTMLElement),
+};
+
+let boardView: BoardView;
+let previewView: PreviewView;
+try {
+  boardView = createBoardView(requireElement("board", HTMLCanvasElement));
+  previewView = createPreviewView(requireElement("next", HTMLCanvasElement));
+} catch (error) {
+  showFatalError(overlay, "This browser couldn't start WebGL, which the 3D board needs.");
+  throw error;
+}
 
 const nextPiece = randomPieceSource(Math.random);
 const storage = browserStorage();
@@ -71,9 +84,10 @@ function onFrame(deltaMs: number): void {
   } else {
     gravityElapsedMs = 0;
   }
-  renderBoard(context, state);
-  renderPreview(previewContext, state.next);
+  boardView.render(state, deltaMs);
+  previewView.render(state.next, deltaMs, state.status !== "paused");
   renderHud(hud, state, highScore);
+  renderOverlay(overlay, state.status);
 }
 
 bindKeyboard(window, handleCommand);
